@@ -35,8 +35,8 @@ my %GRAPH = (
         'BCHILDS'  => []
 	);
     
-my ($verbose, $filename, $outputfile, $outfile, $dotformat
-    ) = (0, undef, undef, undef, 'png');
+my ($verbose, $filename, $outputfile, $outfile, $dotformat, $kmer
+    ) = (0, undef, undef, undef, 'png', 20);
 #          # default: quiet and reuse input file name for output
 
 my %VALID_DOTFORMATS = (
@@ -53,6 +53,7 @@ GetOptions(
     "d|debug"       => sub { $verbose = 2; }, # default $verbose is 0 that means "be quiet"
     "o|outfile=s"   => \$outfile,
     "t|dotformat=s" => \$dotformat,
+    "k|kmer=i"      => \$kmer,
     "h|help"        => \&help                 # Calling help function, passed by reference
 );
 
@@ -74,6 +75,11 @@ exists($VALID_DOTFORMATS{$dotformat}) || do {
     $dotformat = 'png'; 
 };
 
+# Add a check to ensure kmer is valid
+if ($kmer <= 1) {
+    die "## ERROR ## You must provide a valid k-mer size greater than 1 using -k (e.g., -k 3).\n";
+}
+
 #
 # MAIN BLOCK
 
@@ -83,10 +89,6 @@ print STDERR "#####\n##### RUNNING $0 PID[$$] ",
              if $verbose;
 
 &read_from_input_file($verbose, $filename, \%GRAPH);
-
-&save_dot_file($verbose, $outputfile, $GRAPH{'P2C'});
-
-&run_graphviz_dot($verbose, $dotformat, $outputfile);
 
 &search_top_to_bottom($verbose, $outputfile."_childs.tbl",
                       $GRAPH{'P2C'}, $GRAPH{'BCHILDS'});
@@ -169,163 +171,77 @@ sub read_from_input_file() {
         # and the second argument into the second variable
     my %UNIQUE = ();
 
-    print STDERR "# Reading pairs from $filename...\n"
+    print STDERR "# Reading FASTQ from $filename and generating k-mers (k=$kmer)...\n"
                  if $verbose;
     
     open(IFH, $filename) ||
         die("## ERROR ## Cannot open $filename...\n");
 
-    my $pairs = 0;
-    my ($c, $n) = ('.', 0);
-    while (<IFH>) {
-        my ($wordA, $wordB);
+    my $reads_processed = 0;
+    my $kmers_count = 0;
 
-        $c = '.';
-    
-        next if /^\s*$/;
+    # READ FASTQ (4 lines per record)
+    while (my $header = <IFH>) {
+        my $seq  = <IFH>;
+        my $plus = <IFH>;
+        my $qual = <IFH>;
 
-        $c = 'x';
         
-        chomp;
-        
-        ($wordA, $wordB) = split /\s+/, $_;
+        chomp($seq); # Remove newline from sequence
 
-        # PARENTS
-        ## the next two lines are not mandatory because of autovivification
-        exists($graph->{'P2C'}{$wordA}) ||
-              ($graph->{'P2C'}{$wordA} = {});
-        exists($graph->{'P2C'}{$wordA}{$wordB}) ||
-              ($graph->{'P2C'}{$wordA}{$wordB} = 0);
-        ##
-        $graph->{'P2C'}{$wordA}{$wordB}++;
-        # this ia a new entry in a hash of hashes
-        # that stores parent nodes as primary keys
-        # and child nodes as secondary keys...
+        # Validate sequence length vs kmer size
+        my $len = length($seq);
+        next if $len < $kmer;
 
-        # CHILDS
-        exists($graph->{'C2P'}{$wordB}) ||
-              ($graph->{'C2P'}{$wordB} = {});
-        exists($graph->{'C2P'}{$wordB}{$wordA}) ||
-              ($graph->{'C2P'}{$wordB}{$wordA} = 0);
-        ##
-        $graph->{'C2P'}{$wordB}{$wordA}++;
-    
-        # Add word nodes to unique hash
-        $UNIQUE{$wordA}++;
-        $UNIQUE{$wordB}++; 
-    
-        $pairs++;
+        $reads_processed++;
+
         
-    } continue {
-        $n++;
-        $verbose && do {
-            print STDERR $c;
-            printf STDERR "[%05d]\n", $n if ($n % 50 == 0);
-        };
+        # SLIDING WINDOW to generate K-mers
+        # We go from 0 up to Length - K
+        for (my $i = 0; $i <= ($len - $kmer); $i++) {
+            
+            # Extract the full k-mer
+            my $current_kmer = substr($seq, $i, $kmer);
+
+            # In De Bruijn graphs:
+            # Parent is the Prefix (length k-1)
+            # Child is the Suffix (length k-1)
+            my $node_len = $kmer;
+            my $wordA = substr($current_kmer, 0, $node_len); # Prefix
+            my $wordB = substr($current_kmer, 1, $node_len); # Suffix
+
+            # --- GRAPH CONSTRUCTION (Same as original code) ---
+            
+            # PARENTS
+            exists($graph->{'P2C'}{$wordA}) || ($graph->{'P2C'}{$wordA} = {});
+            exists($graph->{'P2C'}{$wordA}{$wordB}) || ($graph->{'P2C'}{$wordA}{$wordB} = 0);
+            $graph->{'P2C'}{$wordA}{$wordB}++;
+
+            # CHILDS
+            exists($graph->{'C2P'}{$wordB}) || ($graph->{'C2P'}{$wordB} = {});
+            exists($graph->{'C2P'}{$wordB}{$wordA}) || ($graph->{'C2P'}{$wordB}{$wordA} = 0);
+            $graph->{'C2P'}{$wordB}{$wordA}++;
+            
+            # Add to UNIQUE list
+            $UNIQUE{$wordA}++;
+            $UNIQUE{$wordB}++; 
+            $kmers_count++;
+        }; 
+
     }; # <IFH>
-
     close(IFH);
 
-    $verbose && do {
+    print STDERR "## Processed $reads_processed reads, generated $kmers_count edges...\n" if $verbose;
 
-        printf STDERR "[%05d]\n", $n if ($n % 50 != 0);
-
-        print STDERR "## Processed $n input lines...\n";
-
-    };
-
+    # Populate the node list
     foreach my $node (keys %UNIQUE) {
-    
-    	push @{ $graph->{'NODES'} }, $node;
-    	$graph->{'Nnodes'}++;
-    
-    }; # foreach $node
-
-    print STDERR "## There were ",$graph->{'Nnodes'},
-                 " unique nodes from $pairs pairs of sequences\n"
-                 if $verbose;
-
-    print STDERR Data::Dumper->Dump([ \%GRAPH ], [ qw( *GRAPH ) ]),"\n"
-                 if $verbose==2;
+        push @{ $graph->{'NODES'} }, $node;
+        $graph->{'Nnodes'}++;
+    }
 
 } # read_from_input_file
 
-sub save_dot_file() {
-    my ($verbose, $outfile, $graph) = @_;
 
-    # As we have to traverse the whole data structure that simulates the graph,
-    # we will count the number of edges and nodes that compose that graph.
-    my ($edges, $nodes) = (0, 0);
-    my %uniquenodes = ();
-    
-    # We will output the graph in GraphViz format
-    # further info from https://graphviz.org/
-    $outfile .= ".dot";
-
-    print STDERR "# Writing graph in DOT format to $outfile...\n"
-                 if $verbose;
-
-    open(OFH, "> $outfile") ||
-        die("## ERROR ## Cannot open $outfile...\n");
-
-    print OFH "digraph G {\n";
-
-    foreach my $parent (keys %{$graph}) {
-        foreach my $child (keys %{$graph->{$parent}}) {
-             my $extra = '';
-             $parent =~ /^\.\.\./ && 
-                 ($extra .= "\t\"$parent\" [style=filled, fillcolor=green];\n");
-             $child  =~ /\.\.\.$/ && 
-                 ($extra .= "\t\"$child\" [style=filled, fillcolor=skyblue1];\n");
-             # now, we are adding colors to terminal nodes
-             # (named colors from https://graphviz.org/doc/info/colors.html)
-             # and change linewidth based on edge counts
-             print OFH $extra,
-                       "\t\"$parent\" -> \"$child\" ",
-                       "[penwidth=$graph->{$parent}{$child}];\n";
-             $edges++;
-             $uniquenodes{$parent}++;
-             $uniquenodes{$child}++;
-       }; # foreach $child
-    }; # foreach $parents
-    
-    print OFH "}\n";
-
-    close(OFH);
-    $nodes = scalar keys %uniquenodes;
-        
-    print STDERR "# SAVED graph in DOT format with $edges edges and $nodes nodes...\n"
-                 if $verbose;
-
-    # now, if we run:
-    #
-    #   ./worderator.pl pairs_of_words_short.tbl
-    #
-    # and then (if having graphviz installed) we run:
-    #
-    #   dot -v -Tpng -O pairs_of_words_short.dot
-    #
-    # we get a graph.dot.png file that displays the graph structure...
-
-} # save_dot_file
-
-sub run_graphviz_dot() {
-    my ($verbose, $dotformat, $outfile) = @_;
-    
-    my $verbopt = '-v';
-    $verbopt = '' unless $verbose; # changing only when $verbose==0
-
-    $outfile .= ".dot";
-
-    print STDERR "# Running DOT program on $outfile...\n"
-                 if $verbose;
-
-    system("dot ${verbopt} -T${dotformat} -O ${outfile}");
-
-    print STDERR "# \U${dotformat} file has been generated...\n"
-                 if $verbose;
-
-} # run_graphviz_dot
 
 sub search_top_to_bottom() {
     my ($verbose, $outputfile, $graph, $array) = @_;
