@@ -10,8 +10,6 @@ use Benchmark;
 use Getopt::Long;
 
 # VARIABLES
-my @exectime = ();
-
 my %GRAPH = (
     'P2C'      => {},   # parent -> child -> count
     'C2P'      => {},
@@ -19,14 +17,7 @@ my %GRAPH = (
     'BCHILDS'  => []    # bottom childs (terminal nodes)
 );
 
-my ($verbose, $filename, $outputfile, $outfile, $dotformat, $K) = (0, undef, undef, undef, 'png', 21);
-
-my %VALID_DOTFORMATS = (
-    'png' => 0,
-    'jpg' => 0,
-    'gif' => 0,
-    'pdf' => 0 
-);
+my ($verbose, $filename, $outputfile, $outfile, $K) = (0, undef, undef, undef, 21);
 
 
 # COMMAND-LINE OPTIONS
@@ -34,7 +25,6 @@ GetOptions(
     "v|verbose" => sub { $verbose = 1; },
     "d|debug"   => sub { $verbose = 2; },
     "o|outfile=s" => \$outfile,
-    "t|dotformat=s" => \$dotformat,
     "k|kmer=i" => \$K,
     "h|help" => \&help
 );
@@ -48,12 +38,6 @@ if (defined($outfile)) {
     ($outputfile = $filename) =~ s/\.[^\.]+$//;# if defined $filename;
 };
 
-$dotformat = lc($dotformat);
-exists($VALID_DOTFORMATS{$dotformat}) || do {
-    print STDERR "### ERROR ### $dotformat is not a valid graphical format for dot program...\n",
-                 "###           Using default PNG format... (see help information).\n";
-    $dotformat = 'png'; 
-};
 
 # Add a check to ensure kmer is valid
 if ($K <= 1) {
@@ -62,7 +46,7 @@ if ($K <= 1) {
 
 
 # MAIN
-push @exectime, (new Benchmark);
+my $t_start = Benchmark->new;
 print STDERR "##### RUNNING $0 PID[$$] #####\n" if $verbose;
 
 read_from_input_file($verbose, $filename, \%GRAPH);
@@ -73,12 +57,12 @@ search_top_to_bottom($verbose, $outputfile."_parents.tbl", $GRAPH{'C2P'}, $GRAPH
 
 traverse_graph_function($verbose, $outputfile."_contigs.tbl", $GRAPH{'P2C'}, $GRAPH{'TPARENTS'});
 
+my $t_end = Benchmark->new;
 print STDERR "#####\n##### Time spent: ",
-             timestr(timediff($exectime[ $#exectime ],
-                              $exectime[($#exectime - 1) ])),
-             " #####\n#####\n",
-             "##### $0 HAS FINISHED #####\n#####\n"
-             if $verbose;
+    timestr(timediff($t_end, $t_start)),
+    " #####\n#####\n",
+    "##### $0 HAS FINISHED #####\n#####\n"
+    if $verbose;
 
 exit(0);
 
