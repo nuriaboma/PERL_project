@@ -1,5 +1,4 @@
 #!/usr/bin/perl
-# worderator.pl input_pairs_file.fastq
 # Build a de-Bruijn graph from FASTQ reads and output longest contigs.
 
 use strict;
@@ -35,7 +34,7 @@ $filename = shift @ARGV;
 if (defined($outfile)) {
     $outputfile = $outfile ;
 } else {
-    ($outputfile = $filename) =~ s/\.[^\.]+$//;# if defined $filename;
+    ($outputfile = $filename) =~ s/\.[^\.]+$// if defined $filename;
 };
 
 
@@ -58,10 +57,9 @@ search_top_to_bottom($verbose, $outputfile."_parents.tbl", $GRAPH{'C2P'}, $GRAPH
 traverse_graph_function($verbose, $outputfile."_contigs.tbl", $GRAPH{'P2C'}, $GRAPH{'TPARENTS'});
 
 my $t_end = Benchmark->new;
-print STDERR "#####\n##### Time spent: ",
+print STDERR "\n## Time spent: ",
     timestr(timediff($t_end, $t_start)),
-    " #####\n#####\n",
-    "##### $0 HAS FINISHED #####\n#####\n"
+    "\n\n##### $0 HAS FINISHED #####\n"
     if $verbose;
 
 exit(0);
@@ -72,7 +70,7 @@ sub help {
     print STDERR <<'EOHelp';
 USAGE: 
 
-    worderator.pl [options] input_reads.fastq
+    de-bruijn.pl [options] input_reads.fastq
 
 DESCRIPTION:
 
@@ -82,7 +80,6 @@ DESCRIPTION:
 OPTIONS:
 
     -o | --outfile "file.out"      Output filename prefix
-    -t | --dotformat "format"      PNG, JPG, GIF, PDF (default PNG)
     -k | --kmer <int>              Set k-mer size (default 21)
     -v | --verbose                 Report execution
     -d | --debug                   Extended internal debug
@@ -107,15 +104,15 @@ sub read_from_input_file {
     my $node_len=$k-1;
 
     while (1) {
-        my $header = <IFH>; last unless defined $header;
+        my $header = <IFH>; last unless defined $header; # End loop if there is no header line
         my $seq    = <IFH>;
         my $plus   = <IFH>;
-        my $qual   = <IFH>; #last unless defined $qual;
+        my $qual   = <IFH>; 
 
         chomp($seq); 
         $n+=4;
 
-        next if length($seq)<$k; #chack sequence length is less than k
+        next if length($seq)<$k; #check sequence length is less than k
 
         for(my $i=0; $i<=length($seq)-$k; $i++){
             my $kmer = substr($seq,$i,$k);
@@ -159,10 +156,6 @@ sub search_top_to_bottom {
     close(OFH);
     print STDERR "# SAVED $nc terminal nodes\n" if $verbose;
 };
-
-#!/usr/bin/perl
-use strict;
-use warnings;
 
 # ---------------------------
 # Compact linear unitigs in the De Bruijn graph
@@ -296,20 +289,20 @@ sub unitig_path_to_sequence {
 sub traverse_graph_function {
     my ($verbose, $outputfile, $graph, $top_parents, $k) = @_;
 
-    print STDERR "# Compacting unitigs...\n";
-    my ($compact_graph, $unitigs, $node2unitig) = compact_unitigs($graph, $k);
+    print STDERR "# Compacting unitigs...\n" if $verbose;
+    my ($compact_graph, $unitigs, $node2unitig) = &compact_unitigs($graph, $k);
 
-    print STDERR "# Unitigs: ", scalar(keys %$unitigs), "\n";
-    print STDERR "# Euler traversal on compacted graph...\n";
+    print STDERR "# Unitigs: ", scalar(keys %$unitigs), "\n" if $verbose;
+    print STDERR "# Euler traversal on compacted graph...\n" if $verbose;
 
     my @contigs;
 
     foreach my $start (@$top_parents) {
-        my $start_uid = find_unitig_for_node($start, $node2unitig);
+        my $start_uid = &find_unitig_for_node($start, $node2unitig);
         next unless defined $start_uid;
 
-        my @euler = eulerian_path_from_node($start_uid, $compact_graph);
-        my $seq   = unitig_path_to_sequence(\@euler, $unitigs);
+        my @euler = &eulerian_path_from_node($start_uid, $compact_graph);
+        my $seq   = &unitig_path_to_sequence(\@euler, $unitigs);
 
         push @contigs, $seq if defined $seq && length($seq) > 0;
     }
@@ -327,5 +320,5 @@ sub traverse_graph_function {
     }
     close($OUT);
 
-    print STDERR "# Finished. Top ", scalar(@top5), " sequences written to $outputfile\n";
+    print STDERR "# Finished. Top ", scalar(@top5), " sequences written to $outputfile\n" if $verbose;
 };
